@@ -1,0 +1,64 @@
+name: "📻 Grabación Automática de Radio en la Nube"
+
+on:
+  schedule:
+    # Radio Sudamericana (104.5 FM) a las 1:00 PM PET (18:00 UTC)
+    - cron: '0 18 * * 1,2,3,4,5'
+    # Radio Tarma (99.7 FM) a las 6:30 AM PET (11:30 UTC)
+    - cron: '30 11 * * 1,2,3,4,5'
+    
+  # Permite ejecutarlo manualmente cuando quieras desde GitHub o Panel Admin
+  workflow_dispatch:
+    inputs:
+      station:
+        description: "Emisora a grabar (o 'auto' para procesar programadas)"
+        required: true
+        default: "sudamericana"
+        type: choice
+        options:
+          - "auto"
+          - "sudamericana"
+          - "tarma"
+          - "cumbre"
+          - "sudamericana"
+      duration:
+        description: "Duración en segundos (Ej: 3600 = 1 hora, 7200 = 2 horas)"
+        required: true
+        default: "3600"
+      custom_title:
+        description: "Título opcional del noticiero o programa"
+        required: false
+        default: ""
+
+jobs:
+  record-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: 📥 Descargar código
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 🎙️ Instalar FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: 🔴 Grabar Radio y Guardar en Cloudinary
+        env:
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME || 'bk9klm2l' }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY }}
+          STATION_ID: ${{ inputs.station || 'auto' }}
+          RECORD_DURATION_SECS: ${{ inputs.duration || '3600' }}
+          CUSTOM_TITLE: ${{ inputs.custom_title || '' }}
+        run: |
+          node scripts/record-radio.mjs "$STATION_ID" "$RECORD_DURATION_SECS" "$CUSTOM_TITLE"
