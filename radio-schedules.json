@@ -1,0 +1,44 @@
+[
+  {
+    "id": "sched_tarma_0700",
+    "stationId": "rdo_rtarma",
+    "stationName": "Radio Tarma",
+    "frequency": "99.3 FM",
+    "province": "Tarma",
+    "streamUrl": "https://cloud9.ldwebstudios.net:7003/;",
+    "enabled": true,
+    "timePeru": "06:30",
+    "daysOfWeek": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "durationSecs": 3600,
+    "customTitle": "Noticiero Matinal",
+    "bitrate": "96k",
+    "createdAt": "2025-01-01T12:00:00.000Z"
+  },
+  {
+    "id": "sched_1789059625606",
+    "stationId": "rdo_rtarma",
+    "stationName": "Radio Tarma",
+    "frequency": "99.3 FM",
+    "province": "Tarma",
+    "streamUrl": "https://cloud9.ldwebstudios.net:7003/;",
+    "enabled": true,
+    "timePeru": "13:00",
+    "daysOfWeek": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "durationSecs": 3600,
+    "customTitle": "Noticiero Boletín 99",
+    "bitrate": "96k",
+    "createdAt": "2026-09-10T17:00:25.606Z"
+  }
+]
