@@ -25,6 +25,26 @@ on:
         required: false
         default: ""
         type: string
+      stream_url:
+        description: "URL directa del streaming de audio de la radio"
+        required: false
+        default: ""
+        type: string
+      station_name:
+        description: "Nombre de la emisora"
+        required: false
+        default: ""
+        type: string
+      frequency:
+        description: "Frecuencia de la emisora (ej: 99.7 FM)"
+        required: false
+        default: ""
+        type: string
+      province:
+        description: "Provincia de la emisora (ej: Tarma, Huancayo)"
+        required: false
+        default: ""
+        type: string
 
 jobs:
   record-and-upload:
@@ -60,6 +80,10 @@ jobs:
           STATION_ID: ${{ inputs.station || 'auto' }}
           RECORD_DURATION_SECS: ${{ inputs.duration || '3600' }}
           CUSTOM_TITLE: ${{ inputs.custom_title || '' }}
+          STREAM_URL: ${{ inputs.stream_url || '' }}
+          STATION_NAME: ${{ inputs.station_name || '' }}
+          STATION_FREQUENCY: ${{ inputs.frequency || '' }}
+          STATION_PROVINCE: ${{ inputs.province || '' }}
         run: |
           if [ ! -f "scripts/record-radio.mjs" ]; then
             echo "================================================================"
@@ -68,4 +92,4 @@ jobs:
             echo "================================================================"
             exit 1
           fi
-          node scripts/record-radio.mjs "$STATION_ID" "$RECORD_DURATION_SECS" "$CUSTOM_TITLE"
+          node scripts/record-radio.mjs "$STATION_ID" "$RECORD_DURATION_SECS" "$CUSTOM_TITLE" "$STREAM_URL" "$STATION_NAME" "$STATION_FREQUENCY" "$STATION_PROVINCE"
