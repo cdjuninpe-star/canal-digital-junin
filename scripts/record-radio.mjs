@@ -343,6 +343,18 @@ async function recordSingleStation(station, durationSecs, customTitle) {
 
     await saveToSupabase(recordingRecord);
     if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+    console.log(`[RECORDING_JSON]${JSON.stringify(recordingRecord)}[/RECORDING_JSON]`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      try {
+        const summaryMd = `### 🎙️ Grabación Radial Exitosa\n` +
+          `- **Emisora:** ${station.name} (${station.frequency || "FM"})\n` +
+          `- **Título:** ${title}\n` +
+          `- **Duración:** ${formatDuration(durationSecs)}\n` +
+          `- **Archivo:** [Escuchar MP3 en Cloudinary](${uploadResult.audioUrl})\n` +
+          `- **Fecha:** ${new Date().toLocaleString("es-PE", { timeZone: "America/Lima" })}\n\n`;
+        fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryMd);
+      } catch (_) {}
+    }
     console.log(`✅ ${station.name}: Finalizado y almacenado con éxito.`);
     return true;
   } catch (err) {
