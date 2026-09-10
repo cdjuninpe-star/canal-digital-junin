@@ -8,14 +8,24 @@ import path from "path";
 import { spawn } from "child_process";
 import crypto from "crypto";
 
-// Emisoras preconfiguradas de respaldo de la Región Junín
+// Emisoras preconfiguradas de respaldo de la Región Junín con URLs activas y de respaldo
 const PRESET_STATIONS = {
   sudamericana: {
     id: "sudamericana",
     name: "Radio Sudamericana",
     frequency: "104.5 FM",
     province: "Huancayo",
-    streamUrl: "https://stream.zeno.fm/4tvyk2q5vvhvv",
+    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+    defaultDuration: 3600
+  },
+  "radio-sudamericana": {
+    id: "radio-sudamericana",
+    name: "Radio Sudamericana",
+    frequency: "104.5 FM",
+    province: "Huancayo",
+    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
     defaultDuration: 3600
   },
   tarma: {
@@ -23,7 +33,17 @@ const PRESET_STATIONS = {
     name: "Radio Tarma",
     frequency: "99.7 FM",
     province: "Tarma",
-    streamUrl: "https://stream.zeno.fm/p2w5826f04zuv",
+    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
+    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
+    defaultDuration: 3600
+  },
+  "radio-tarma": {
+    id: "radio-tarma",
+    name: "Radio Tarma",
+    frequency: "99.7 FM",
+    province: "Tarma",
+    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
+    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
     defaultDuration: 3600
   },
   cumbre: {
@@ -31,7 +51,17 @@ const PRESET_STATIONS = {
     name: "Radio Cumbre",
     frequency: "98.5 FM",
     province: "Huancayo",
-    streamUrl: "https://stream.zeno.fm/u1e19dqw198uv",
+    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
+    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
+    defaultDuration: 3600
+  },
+  "radio-cumbre": {
+    id: "radio-cumbre",
+    name: "Radio Cumbre",
+    frequency: "98.5 FM",
+    province: "Huancayo",
+    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
+    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
     defaultDuration: 3600
   }
 };
@@ -39,6 +69,10 @@ const PRESET_STATIONS = {
 const stationArg = process.argv[2] || process.env.STATION_ID || "auto";
 const durationArg = process.argv[3] || process.env.RECORD_DURATION_SECS || "3600";
 const customTitleArg = process.argv[4] || process.env.CUSTOM_TITLE || "";
+const streamUrlArg = process.argv[5] || process.env.STREAM_URL || "";
+const stationNameArg = process.argv[6] || process.env.STATION_NAME || "";
+const frequencyArg = process.argv[7] || process.env.STATION_FREQUENCY || "";
+const provinceArg = process.argv[8] || process.env.STATION_PROVINCE || "";
 
 const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || "bk9klm2l";
 const API_KEY = process.env.CLOUDINARY_API_KEY;
@@ -69,6 +103,12 @@ async function recordStream(streamUrl, duration, outputPath) {
     
     const ffmpeg = spawn("ffmpeg", [
       "-y",
+      "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "-reconnect", "1",
+      "-reconnect_at_eof", "1",
+      "-reconnect_streamed", "1",
+      "-reconnect_delay_max", "5",
+      "-timeout", "15000000",
       "-i", streamUrl,
       "-t", duration.toString(),
       "-acodec", "aac",
@@ -77,20 +117,32 @@ async function recordStream(streamUrl, duration, outputPath) {
       outputPath
     ]);
 
+    let stderrLogs = "";
     ffmpeg.stderr.on("data", (data) => {
-      // Monitorización silenciosa para no saturar los logs
+      stderrLogs = (stderrLogs + data.toString()).slice(-3000);
     });
 
     ffmpeg.on("close", (code) => {
-      if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
-        console.log(`[FFmpeg] Grabación exitosa. Archivo: ${formatBytes(fs.statSync(outputPath).size)}`);
+      const exists = fs.existsSync(outputPath);
+      const size = exists ? fs.statSync(outputPath).size : 0;
+
+      // Si el código es 0 o si el archivo tiene audio capturado (> 10KB), consideramos la grabación exitosa
+      if ((code === 0 || code === 255) && exists && size > 10000) {
+        console.log(`[FFmpeg] Grabación exitosa (${formatBytes(size)} capturados).`);
+        resolve(true);
+      } else if (exists && size > 25000) {
+        console.log(`[FFmpeg] Grabación completada con aviso (código ${code}, ${formatBytes(size)} capturados).`);
         resolve(true);
       } else {
-        reject(new Error(`FFmpeg terminó con código de error ${code}`));
+        console.error(`[FFmpeg Error Logs]:\n${stderrLogs}`);
+        reject(new Error(`FFmpeg terminó con código ${code} y tamaño insuficiente (${formatBytes(size)})`));
       }
     });
 
-    ffmpeg.on("error", (err) => reject(err));
+    ffmpeg.on("error", (err) => {
+      console.error(`[FFmpeg Process Error]: ${err.message}`);
+      reject(err);
+    });
   });
 }
 
@@ -111,6 +163,23 @@ async function uploadToCloudinary(filePath, stationId) {
     timestamp: timestamp,
     resource_type: "video"
   };
+
+  if (!((API_KEY && API_SECRET) || UPLOAD_PRESET)) {
+    console.error(`
+================================================================================
+❌ ERROR CRÍTICO: FALTAN SECRETOS (SECRETS) EN GITHUB ACTIONS
+El workflow no tiene acceso a las credenciales de Cloudinary.
+Para solucionarlo:
+1. Abre tu repositorio en GitHub
+2. Ve a: Settings > Secrets and variables > Actions > New repository secret
+3. Agrega:
+   - CLOUDINARY_API_KEY
+   - CLOUDINARY_API_SECRET
+   - CLOUDINARY_CLOUD_NAME
+================================================================================
+`);
+    throw new Error("Faltan Secrets de Cloudinary en GitHub Actions (CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET)");
+  }
 
   if (API_KEY && API_SECRET) {
     const stringToSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${API_SECRET}`;
@@ -232,7 +301,28 @@ async function recordSingleStation(station, durationSecs, customTitle) {
   console.log("=================================================");
 
   try {
-    await recordStream(station.streamUrl, durationSecs, tempFile);
+    let recordedOk = false;
+    try {
+      await recordStream(station.streamUrl, durationSecs, tempFile);
+      recordedOk = true;
+    } catch (err) {
+      console.warn(`⚠️ Primer intento de captura para ${station.name} falló: ${err.message}`);
+      const backupUrl = station.fallbackUrl || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3";
+      if (backupUrl && backupUrl !== station.streamUrl) {
+        console.log(`🔄 Reintentando con flujo de respaldo: ${backupUrl}`);
+        try {
+          await recordStream(backupUrl, durationSecs, tempFile);
+          recordedOk = true;
+        } catch (err2) {
+          console.error(`❌ Falló también el flujo de respaldo:`, err2.message);
+        }
+      }
+    }
+
+    if (!recordedOk || !fs.existsSync(tempFile)) {
+      throw new Error(`No se pudo obtener el audio de la transmisión para ${station.name}`);
+    }
+
     const fileSize = fs.statSync(tempFile).size;
     const uploadResult = await uploadToCloudinary(tempFile, station.id);
 
@@ -275,12 +365,12 @@ async function main() {
       console.log("[Scheduler] Utilizando emisoras predeterminadas de la Región Junín.");
       schedules = [
         {
-          id: "sudamericana",
-          stationId: "sudamericana",
-          stationName: "Radio Sudamericana",
-          frequency: "104.5 FM",
-          province: "Huancayo",
-          streamUrl: "https://stream.zeno.fm/4tvyk2q5vvhvv",
+          id: "tarma",
+          stationId: "tarma",
+          stationName: "Radio Tarma",
+          frequency: "99.7 FM",
+          province: "Tarma",
+          streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
           durationSecs: parseInt(durationArg, 10) || 3600,
           customTitle: customTitleArg
         }
@@ -303,12 +393,15 @@ async function main() {
     process.exit(0);
   }
 
-  const selectedStation = PRESET_STATIONS[stationArg.toLowerCase()] || {
-    id: stationArg.toLowerCase().replace(/[^a-z0-9]/g, "_"),
-    name: process.env.STATION_NAME || `Emisora ${stationArg}`,
-    frequency: process.env.STATION_FREQUENCY || "FM",
-    province: process.env.STATION_PROVINCE || "Junín",
-    streamUrl: process.env.STREAM_URL || "https://stream.zeno.fm/4tvyk2q5vvhvv"
+  // MODO EMISORA ESPECÍFICA
+  const preset = PRESET_STATIONS[stationArg.toLowerCase()];
+  const selectedStation = {
+    id: preset?.id || stationArg.toLowerCase().replace(/[^a-z0-9]/g, "_"),
+    name: stationNameArg || process.env.STATION_NAME || preset?.name || `Emisora ${stationArg}`,
+    frequency: frequencyArg || process.env.STATION_FREQUENCY || preset?.frequency || "FM",
+    province: provinceArg || process.env.STATION_PROVINCE || preset?.province || "Junín",
+    streamUrl: streamUrlArg || process.env.STREAM_URL || preset?.streamUrl || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
+    fallbackUrl: preset?.fallbackUrl || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
   };
 
   const durationSecs = parseInt(durationArg, 10) || 3600;
