@@ -250,6 +250,37 @@ async function saveToSupabase(rec) {
   }
 }
 
+function getLocalSchedules() {
+  const possiblePaths = [
+    path.join(process.cwd(), "radio-schedules.json"),
+    path.join(process.cwd(), "scripts", "radio-schedules.json")
+  ];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      try {
+        const raw = fs.readFileSync(p, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          console.log(`[Scheduler] ${parsed.length} programación(es) cargadas desde archivo local '${p}'`);
+          return parsed.map((s) => ({
+            id: s.id || s.stationId,
+            stationId: s.stationId || s.id,
+            stationName: s.stationName || s.name,
+            frequency: s.frequency || "FM",
+            province: s.province || "Junín",
+            streamUrl: s.streamUrl,
+            durationSecs: s.durationSecs || 3600,
+            customTitle: s.customTitle || ""
+          }));
+        }
+      } catch (err) {
+        console.warn(`[Scheduler] Aviso al leer ${p}:`, err.message);
+      }
+    }
+  }
+  return null;
+}
+
 async function fetchActiveSchedulesFromSupabase() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
   try {
@@ -282,6 +313,14 @@ async function fetchActiveSchedulesFromSupabase() {
   return null;
 }
 
+async function getActiveSchedules() {
+  const local = getLocalSchedules();
+  if (local && local.length > 0) return local;
+  const fromSupabase = await fetchActiveSchedulesFromSupabase();
+  if (fromSupabase && fromSupabase.length > 0) return fromSupabase;
+  return [];
+}
+
 async function recordSingleStation(station, durationSecs, customTitle) {
   const timestampStr = new Date().toLocaleDateString("es-PE", {
     timeZone: "America/Lima",
@@ -307,8 +346,8 @@ async function recordSingleStation(station, durationSecs, customTitle) {
       recordedOk = true;
     } catch (err) {
       console.warn(`⚠️ Primer intento de captura para ${station.name} falló: ${err.message}`);
-      const backupUrl = station.fallbackUrl || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3";
-      if (backupUrl && backupUrl !== station.streamUrl) {
+      const backupUrl = station.fallbackUrl;
+      if (backupUrl && backupUrl !== station.streamUrl && !backupUrl.includes("soundhelix.com")) {
         console.log(`🔄 Reintentando con flujo de respaldo: ${backupUrl}`);
         try {
           await recordStream(backupUrl, durationSecs, tempFile);
@@ -320,6 +359,9 @@ async function recordSingleStation(station, durationSecs, customTitle) {
     }
 
     if (!recordedOk || !fs.existsSync(tempFile)) {
+      console.error(`❌ ERROR CRÍTICO: No se pudo conectar a la transmisión en vivo de "${station.name}".`);
+      console.error(`🔗 URL intentada: ${station.streamUrl}`);
+      console.error(`💡 Por favor verifica que la radio esté emitiendo en vivo y que la URL de streaming esté activa.`);
       throw new Error(`No se pudo obtener el audio de la transmisión para ${station.name}`);
     }
 
@@ -343,6 +385,8 @@ async function recordSingleStation(station, durationSecs, customTitle) {
 
     await saveToSupabase(recordingRecord);
     if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
+    console.log(`[RAW_URL_BASE64]${Buffer.from(uploadResult.audioUrl).toString("base64")}[/RAW_URL_BASE64]`);
+    console.log(`[CLOUDINARY_BYTES]${fileSize}[/CLOUDINARY_BYTES]`);
     console.log(`[RECORDING_JSON]${JSON.stringify(recordingRecord)}[/RECORDING_JSON]`);
     if (process.env.GITHUB_STEP_SUMMARY) {
       try {
@@ -370,23 +414,14 @@ async function main() {
   console.log(`⚙️ Modo solicitado: ${stationArg}`);
   console.log("=================================================");
 
+  // MODO AUTOMÁTICO: Obtener programaciones activas (desde archivo local o Supabase)
   if (stationArg === "auto" || stationArg === "all") {
-    let schedules = await fetchActiveSchedulesFromSupabase();
+    const schedules = await getActiveSchedules();
 
     if (!schedules || schedules.length === 0) {
-      console.log("[Scheduler] Utilizando emisoras predeterminadas de la Región Junín.");
-      schedules = [
-        {
-          id: "tarma",
-          stationId: "tarma",
-          stationName: "Radio Tarma",
-          frequency: "99.7 FM",
-          province: "Tarma",
-          streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
-          durationSecs: parseInt(durationArg, 10) || 3600,
-          customTitle: customTitleArg
-        }
-      ];
+      console.warn("\n⚠️ AVISO: No se encontraron emisoras programadas activas en 'radio-schedules.json' ni en Supabase.");
+      console.warn("Agrega tus programaciones en el panel de control y sincronízalas con GitHub.");
+      process.exit(0);
     }
 
     console.log(`[Scheduler] Procesando ${schedules.length} emisora(s) programada(s)...`);
@@ -394,8 +429,8 @@ async function main() {
       const station = {
         id: sched.stationId || sched.id,
         name: sched.stationName,
-        frequency: sched.frequency,
-        province: sched.province,
+        frequency: sched.frequency || "FM",
+        province: sched.province || "Junín",
         streamUrl: sched.streamUrl
       };
       await recordSingleStation(station, sched.durationSecs || 3600, sched.customTitle || customTitleArg);
@@ -406,14 +441,72 @@ async function main() {
   }
 
   // MODO EMISORA ESPECÍFICA
-  const preset = PRESET_STATIONS[stationArg.toLowerCase()];
+  // 1. Buscar en archivo local radio-schedules.json si existe
+  const localSchedules = getLocalSchedules() || [];
+  const localMatch = localSchedules.find(
+    (s) =>
+      s.stationId?.toLowerCase() === stationArg.toLowerCase() ||
+      s.id?.toLowerCase() === stationArg.toLowerCase() ||
+      s.stationName?.toLowerCase().includes(stationArg.toLowerCase())
+  );
+
+  let streamUrl = streamUrlArg || process.env.STREAM_URL;
+  let stationName = stationNameArg || process.env.STATION_NAME;
+  let stationFreq = frequencyArg || process.env.STATION_FREQUENCY;
+  let stationProv = provinceArg || process.env.STATION_PROVINCE;
+
+  if (localMatch) {
+    console.log(`[Scheduler] Emisora encontrada en radio-schedules.json: ${localMatch.stationName}`);
+    streamUrl = streamUrl || localMatch.streamUrl;
+    stationName = stationName || localMatch.stationName;
+    stationFreq = stationFreq || localMatch.frequency;
+    stationProv = stationProv || localMatch.province;
+  }
+
+  // 2. Si no hay streamUrl, buscar en Supabase
+  if (!streamUrl) {
+    try {
+      const sbSchedules = await fetchActiveSchedulesFromSupabase();
+      const sbMatch = sbSchedules?.find(
+        (s) =>
+          s.stationId?.toLowerCase() === stationArg.toLowerCase() ||
+          s.id?.toLowerCase() === stationArg.toLowerCase() ||
+          s.stationName?.toLowerCase().includes(stationArg.toLowerCase())
+      );
+      if (sbMatch) {
+        console.log(`[Database] Emisora encontrada en Supabase: ${sbMatch.stationName}`);
+        streamUrl = streamUrl || sbMatch.streamUrl;
+        stationName = stationName || sbMatch.stationName;
+        stationFreq = stationFreq || sbMatch.frequency;
+        stationProv = stationProv || sbMatch.province;
+      }
+    } catch (dbErr) {
+      console.warn("[Database] No se pudo consultar Supabase para la emisora:", dbErr.message);
+    }
+  }
+
+  // 3. Si aún no hay streamUrl, verificar PRESET_STATIONS
+  let preset = PRESET_STATIONS[stationArg.toLowerCase()];
+  if (preset) {
+    streamUrl = streamUrl || preset.streamUrl;
+    stationName = stationName || preset.name;
+    stationFreq = stationFreq || preset.frequency;
+    stationProv = stationProv || preset.province;
+  }
+
+  if (!streamUrl) {
+    console.error(`\n❌ ERROR: No se encontró una URL de transmisión en vivo (stream_url) para la emisora '${stationArg}'.`);
+    console.error(`Ingresa la URL del streaming en el panel o envíala como parámetro de ejecución.`);
+    process.exit(1);
+  }
+
   const selectedStation = {
     id: preset?.id || stationArg.toLowerCase().replace(/[^a-z0-9]/g, "_"),
-    name: stationNameArg || process.env.STATION_NAME || preset?.name || `Emisora ${stationArg}`,
-    frequency: frequencyArg || process.env.STATION_FREQUENCY || preset?.frequency || "FM",
-    province: provinceArg || process.env.STATION_PROVINCE || preset?.province || "Junín",
-    streamUrl: streamUrlArg || process.env.STREAM_URL || preset?.streamUrl || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
-    fallbackUrl: preset?.fallbackUrl || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
+    name: stationName || `Emisora ${stationArg}`,
+    frequency: stationFreq || "FM",
+    province: stationProv || "Junín",
+    streamUrl: streamUrl,
+    fallbackUrl: preset?.fallbackUrl || ""
   };
 
   const durationSecs = parseInt(durationArg, 10) || 3600;
