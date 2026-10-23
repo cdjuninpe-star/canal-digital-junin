@@ -6,6 +6,8 @@ on:
     - cron: '30 11 * * 1,2,3,4,5'
     # Radio Tarma (99.3 FM) a las 1:00 PM PET (18:00 UTC)
     - cron: '0 18 * * 1,2,3,4,5'
+    # La Jota (105.7 FM) a las 7:20 AM PET (12:20 UTC)
+    - cron: '20 12 * * 1,2,3,4,5'
     
   # Permite ejecutarlo manualmente cuando quieras desde GitHub o Panel Admin
   workflow_dispatch:
@@ -72,9 +74,9 @@ jobs:
       - name: 🔴 Grabar Radio y Guardar en Cloudinary
         env:
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME || 'bk9klm2l' }}
-          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
-          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
-          CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY || '688929722121363' }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET || 'SAQUx_WUWummndGZ4mHewpSG7ZI' }}
+          CLOUDINARY_UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UPLOAD_PRESET || 'canal_digital_audio' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY }}
           STATION_ID: ${{ inputs.station || 'auto' }}
