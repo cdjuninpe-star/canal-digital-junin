@@ -40,5 +40,26 @@
     "customTitle": "Noticiero Boletín 99",
     "bitrate": "96k",
     "createdAt": "2026-09-10T17:00:25.606Z"
+  },
+  {
+    "id": "sched_1791378310692",
+    "stationId": "rdo_lajota",
+    "stationName": "La Jota",
+    "frequency": "105.7 FM",
+    "province": "Tarma",
+    "streamUrl": "https://radio.publikarte.com.pe/listen/radio_la_j/jstream",
+    "enabled": true,
+    "timePeru": "07:20",
+    "daysOfWeek": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "durationSecs": 7200,
+    "customTitle": "La Jota Noticiero Matinal",
+    "bitrate": "96k",
+    "createdAt": "2026-10-07T13:05:10.692Z"
   }
 ]
