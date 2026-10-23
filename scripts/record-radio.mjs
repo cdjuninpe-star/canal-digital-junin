@@ -10,40 +10,68 @@ import crypto from "crypto";
 
 // Emisoras preconfiguradas de respaldo de la Región Junín con URLs activas y de respaldo
 const PRESET_STATIONS = {
+  rdo_rtarma: {
+    id: "rdo_rtarma",
+    name: "Radio Tarma",
+    frequency: "99.3 FM",
+    province: "Tarma",
+    streamUrl: "https://cloud9.ldwebstudios.net:7003/;",
+    defaultDuration: 3600
+  },
+  tarma: {
+    id: "rdo_rtarma",
+    name: "Radio Tarma",
+    frequency: "99.3 FM",
+    province: "Tarma",
+    streamUrl: "https://cloud9.ldwebstudios.net:7003/;",
+    defaultDuration: 3600
+  },
+  "radio-tarma": {
+    id: "rdo_rtarma",
+    name: "Radio Tarma",
+    frequency: "99.3 FM",
+    province: "Tarma",
+    streamUrl: "https://cloud9.ldwebstudios.net:7003/;",
+    defaultDuration: 3600
+  },
+  rdo_lajota: {
+    id: "rdo_lajota",
+    name: "La Jota",
+    frequency: "105.7 FM",
+    province: "Tarma",
+    streamUrl: "https://radio.publikarte.com.pe/listen/radio_la_j/jstream",
+    defaultDuration: 7200
+  },
+  lajota: {
+    id: "rdo_lajota",
+    name: "La Jota",
+    frequency: "105.7 FM",
+    province: "Tarma",
+    streamUrl: "https://radio.publikarte.com.pe/listen/radio_la_j/jstream",
+    defaultDuration: 7200
+  },
+  "la-jota": {
+    id: "rdo_lajota",
+    name: "La Jota",
+    frequency: "105.7 FM",
+    province: "Tarma",
+    streamUrl: "https://radio.publikarte.com.pe/listen/radio_la_j/jstream",
+    defaultDuration: 7200
+  },
+  "la jota": {
+    id: "rdo_lajota",
+    name: "La Jota",
+    frequency: "105.7 FM",
+    province: "Tarma",
+    streamUrl: "https://radio.publikarte.com.pe/listen/radio_la_j/jstream",
+    defaultDuration: 7200
+  },
   sudamericana: {
     id: "sudamericana",
     name: "Radio Sudamericana",
     frequency: "104.5 FM",
     province: "Huancayo",
     streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-    defaultDuration: 3600
-  },
-  "radio-sudamericana": {
-    id: "radio-sudamericana",
-    name: "Radio Sudamericana",
-    frequency: "104.5 FM",
-    province: "Huancayo",
-    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-    defaultDuration: 3600
-  },
-  tarma: {
-    id: "tarma",
-    name: "Radio Tarma",
-    frequency: "99.7 FM",
-    province: "Tarma",
-    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
-    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-    defaultDuration: 3600
-  },
-  "radio-tarma": {
-    id: "radio-tarma",
-    name: "Radio Tarma",
-    frequency: "99.7 FM",
-    province: "Tarma",
-    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
-    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
     defaultDuration: 3600
   },
   cumbre: {
@@ -52,16 +80,6 @@ const PRESET_STATIONS = {
     frequency: "98.5 FM",
     province: "Huancayo",
     streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
-    defaultDuration: 3600
-  },
-  "radio-cumbre": {
-    id: "radio-cumbre",
-    name: "Radio Cumbre",
-    frequency: "98.5 FM",
-    province: "Huancayo",
-    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-    fallbackUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
     defaultDuration: 3600
   }
 };
@@ -250,6 +268,7 @@ async function saveToSupabase(rec) {
   }
 }
 
+// Función para cargar programaciones guardadas localmente en el repositorio (radio-schedules.json)
 function getLocalSchedules() {
   const possiblePaths = [
     path.join(process.cwd(), "radio-schedules.json"),
@@ -281,6 +300,9 @@ function getLocalSchedules() {
   return null;
 }
 
+/**
+ * Consulta a Supabase para obtener las emisoras programadas activas
+ */
 async function fetchActiveSchedulesFromSupabase() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
   try {
@@ -318,7 +340,49 @@ async function getActiveSchedules() {
   if (local && local.length > 0) return local;
   const fromSupabase = await fetchActiveSchedulesFromSupabase();
   if (fromSupabase && fromSupabase.length > 0) return fromSupabase;
-  return [];
+  
+  // Respaldo de seguridad con las 3 emisoras predeterminadas de Junín
+  return [
+    {
+      id: "sched_sudamericana_1045",
+      stationId: "radio-sudamericana",
+      stationName: "Radio Sudamericana",
+      frequency: "104.5 FM",
+      province: "Huancayo",
+      streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+      enabled: true,
+      timePeru: "13:00",
+      daysOfWeek: [1, 2, 3, 4, 5],
+      durationSecs: 3600,
+      customTitle: "Noticiero Emisión Central - Radio Sudamericana"
+    },
+    {
+      id: "sched_tarma_997",
+      stationId: "radio-tarma",
+      stationName: "Radio Tarma",
+      frequency: "99.7 FM",
+      province: "Tarma",
+      streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
+      enabled: true,
+      timePeru: "07:00",
+      daysOfWeek: [1, 2, 3, 4, 5],
+      durationSecs: 3600,
+      customTitle: "Edición Matinal - Radio Tarma"
+    },
+    {
+      id: "sched_cumbre_985",
+      stationId: "radio-cumbre",
+      stationName: "Radio Cumbre",
+      frequency: "98.5 FM",
+      province: "Huancayo",
+      streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
+      enabled: true,
+      timePeru: "18:00",
+      daysOfWeek: [1, 2, 3, 4, 5],
+      durationSecs: 3600,
+      customTitle: "Resumen Informativo - Radio Cumbre"
+    }
+  ];
 }
 
 async function recordSingleStation(station, durationSecs, customTitle) {
@@ -424,8 +488,58 @@ async function main() {
       process.exit(0);
     }
 
-    console.log(`[Scheduler] Procesando ${schedules.length} emisora(s) programada(s)...`);
-    for (const sched of schedules) {
+    // Determinar hora y día actual en Perú (UTC-5)
+    const nowPeru = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Lima" }));
+    const currentHour = nowPeru.getHours();
+    const currentMinute = nowPeru.getMinutes();
+    const currentDay = nowPeru.getDay(); // 0: Dom, 1: Lun, 2: Mar, 3: Mié, 4: Jue, 5: Vie, 6: Sáb
+    const currentTotalMin = currentHour * 60 + currentMinute;
+    const pad = (n) => n.toString().padStart(2, "0");
+    const currentTimeStr = `${pad(currentHour)}:${pad(currentMinute)}`;
+
+    console.log(`[Scheduler] Hora actual en Perú: ${currentTimeStr} (Día ${currentDay}). Evaluando ${schedules.length} programaciones...`);
+
+    let targetSchedules = schedules;
+
+    if (stationArg === "auto") {
+      // Filtrar emisoras programadas para el día de hoy
+      const todaySchedules = schedules.filter(s => {
+        if (s.enabled === false) return false;
+        if (!s.daysOfWeek || !Array.isArray(s.daysOfWeek) || s.daysOfWeek.length === 0) return true;
+        return s.daysOfWeek.includes(currentDay);
+      });
+
+      if (todaySchedules.length > 0) {
+        // Calcular diferencia en minutos con la hora de emisión programada
+        const withDiff = todaySchedules.map(s => {
+          const [hStr, mStr] = (s.timePeru || "13:00").split(":");
+          const schedHour = parseInt(hStr, 10) || 0;
+          const schedMin = parseInt(mStr, 10) || 0;
+          const schedTotalMin = schedHour * 60 + schedMin;
+          let diffMin = Math.abs(currentTotalMin - schedTotalMin);
+          if (diffMin > 720) diffMin = 1440 - diffMin;
+          return { ...s, diffMin, schedHour, schedMin };
+        });
+
+        // Seleccionar aquellas dentro de una ventana razonable (máx 35 minutos de tolerancia para colas de GitHub)
+        const nearSchedules = withDiff.filter(s => s.diffMin <= 35);
+
+        if (nearSchedules.length > 0) {
+          console.log(`[Scheduler] Se encontraron ${nearSchedules.length} emisora(s) correspondiente(s) al horario de ${currentTimeStr} PET:`);
+          targetSchedules = nearSchedules;
+        } else {
+          // GitHub Actions se ejecutó con retraso excesivo (horas después de que terminó el noticiero)
+          withDiff.sort((a, b) => a.diffMin - b.diffMin);
+          const closest = withDiff[0];
+          console.warn(`[Scheduler] ⚠️ GitHub Actions se ejecutó a las ${currentTimeStr} PET, con un desfase de ${closest.diffMin} minutos respecto a '${closest.stationName}' (${closest.timePeru} PET).`);
+          console.warn(`[Scheduler] 🛑 Se descarta la grabación tardía para evitar grabar contenido fuera del horario del noticiero.`);
+          process.exit(0);
+        }
+      }
+    }
+
+    console.log(`[Scheduler] Grabando ${targetSchedules.length} emisora(s) seleccionada(s)...`);
+    for (const sched of targetSchedules) {
       const station = {
         id: sched.stationId || sched.id,
         name: sched.stationName,
