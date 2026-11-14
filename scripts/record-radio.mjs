@@ -121,7 +121,7 @@ async function recordStream(streamUrl, duration, outputPath) {
     
     const ffmpeg = spawn("ffmpeg", [
       "-y",
-      "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       "-reconnect", "1",
       "-reconnect_at_eof", "1",
       "-reconnect_streamed", "1",
@@ -129,9 +129,10 @@ async function recordStream(streamUrl, duration, outputPath) {
       "-timeout", "15000000",
       "-i", streamUrl,
       "-t", duration.toString(),
-      "-acodec", "aac",
-      "-b:a", "96k",
+      "-acodec", "libmp3lame",
+      "-b:a", "64k",
       "-ar", "44100",
+      "-f", "mp3",
       outputPath
     ]);
 
@@ -165,22 +166,11 @@ async function recordStream(streamUrl, duration, outputPath) {
 }
 
 async function uploadToCloudinary(filePath, stationId) {
-  console.log("[Cloudinary] Subiendo grabación a la nube...");
+  console.log("[Cloudinary] Subiendo grabación MP3 a la nube...");
   const timestamp = Math.floor(Date.now() / 1000);
   const folder = "canal_digital_junin/radio_recordings";
-  const publicId = `rec_${Date.now()}_${stationId}`;
-
-  const fileData = fs.readFileSync(filePath);
-  const base64Data = `data:audio/aac;base64,${fileData.toString("base64")}`;
-
-  const endpoint = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload`;
-  const bodyData = {
-    file: base64Data,
-    folder: folder,
-    public_id: publicId,
-    timestamp: timestamp,
-    resource_type: "video"
-  };
+  const safeStationId = String(stationId || "radio").replace(/[^a-zA-Z0-9_-]/g, "_");
+  const publicId = `rec_${Date.now()}_${safeStationId}`;
 
   if (!((API_KEY && API_SECRET) || UPLOAD_PRESET)) {
     console.error(`
@@ -199,24 +189,34 @@ Para solucionarlo:
     throw new Error("Faltan Secrets de Cloudinary en GitHub Actions (CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET)");
   }
 
+  const endpoint = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload`;
+  const fileBuffer = fs.readFileSync(filePath);
+  const mimeType = filePath.endsWith(".aac") ? "audio/aac" : "audio/mpeg";
+  const fileBlob = new Blob([fileBuffer], { type: mimeType });
+
+  const formData = new FormData();
+  formData.append("file", fileBlob, path.basename(filePath));
+  formData.append("folder", folder);
+  formData.append("public_id", publicId);
+
   if (API_KEY && API_SECRET) {
     const stringToSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${API_SECRET}`;
     const signature = crypto.createHash("sha1").update(stringToSign).digest("hex");
-    bodyData.api_key = API_KEY;
-    bodyData.signature = signature;
+    formData.append("timestamp", String(timestamp));
+    formData.append("api_key", API_KEY);
+    formData.append("signature", signature);
   } else if (UPLOAD_PRESET) {
-    bodyData.upload_preset = UPLOAD_PRESET;
+    formData.append("upload_preset", UPLOAD_PRESET);
   }
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(bodyData)
+    body: formData
   });
 
-  const json = await response.json();
+  const json = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(`Cloudinary Error: ${json.error?.message || "Subida rechazada"}`);
+    throw new Error(`Cloudinary Error (${response.status}): ${json.error?.message || "Subida rechazada"}`);
   }
 
   console.log(`[Cloudinary] Subida completada: ${json.secure_url || json.url}`);
@@ -288,6 +288,9 @@ function getLocalSchedules() {
             frequency: s.frequency || "FM",
             province: s.province || "Junín",
             streamUrl: s.streamUrl,
+            enabled: s.enabled !== false,
+            timePeru: s.timePeru || "13:00",
+            daysOfWeek: Array.isArray(s.daysOfWeek) ? s.daysOfWeek : [1, 2, 3, 4, 5],
             durationSecs: s.durationSecs || 3600,
             customTitle: s.customTitle || ""
           }));
@@ -395,7 +398,7 @@ async function recordSingleStation(station, durationSecs, customTitle) {
   });
 
   const title = customTitle || `Emisión ${station.name} - ${timestampStr}`;
-  const tempFile = path.join("/tmp", `recording_${Date.now()}_${station.id}.aac`);
+  const tempFile = path.join("/tmp", `recording_${Date.now()}_${station.id}.mp3`);
 
   console.log("\n=================================================");
   console.log(`📻 GRABANDO: ${station.name} (${station.frequency || "FM"})`);
@@ -467,6 +470,7 @@ async function recordSingleStation(station, durationSecs, customTitle) {
     return true;
   } catch (err) {
     console.error(`❌ Error grabando ${station.name}:`, err.message);
+    console.error(`[ERROR_REASON]${station.name}: ${err.message}[/ERROR_REASON]`);
     if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
     return false;
   }
@@ -521,24 +525,27 @@ async function main() {
           return { ...s, diffMin, schedHour, schedMin };
         });
 
-        // Seleccionar aquellas dentro de una ventana razonable (máx 35 minutos de tolerancia para colas de GitHub)
-        const nearSchedules = withDiff.filter(s => s.diffMin <= 35);
+        // Seleccionar aquellas dentro de una ventana de 90 minutos (por colas habituales en GitHub Actions)
+        const nearSchedules = withDiff.filter(s => s.diffMin <= 90);
 
         if (nearSchedules.length > 0) {
           console.log(`[Scheduler] Se encontraron ${nearSchedules.length} emisora(s) correspondiente(s) al horario de ${currentTimeStr} PET:`);
           targetSchedules = nearSchedules;
         } else {
-          // GitHub Actions se ejecutó con retraso excesivo (horas después de que terminó el noticiero)
+          // GitHub Actions se ejecutó fuera de cualquier ventana horaria programada
           withDiff.sort((a, b) => a.diffMin - b.diffMin);
           const closest = withDiff[0];
-          console.warn(`[Scheduler] ⚠️ GitHub Actions se ejecutó a las ${currentTimeStr} PET, con un desfase de ${closest.diffMin} minutos respecto a '${closest.stationName}' (${closest.timePeru} PET).`);
-          console.warn(`[Scheduler] 🛑 Se descarta la grabación tardía para evitar grabar contenido fuera del horario del noticiero.`);
+          const skipMsg = `GitHub Actions se ejecutó a las ${currentTimeStr} PET (desfase de ${closest.diffMin} min respecto a '${closest.stationName}' a las ${closest.timePeru} PET).`;
+          console.warn(`[Scheduler] ⚠️ ${skipMsg}`);
+          console.warn(`[SKIP_REASON]${skipMsg}[/SKIP_REASON]`);
           process.exit(0);
         }
       }
     }
 
     console.log(`[Scheduler] Grabando ${targetSchedules.length} emisora(s) seleccionada(s)...`);
+    let successCount = 0;
+    let failCount = 0;
     for (const sched of targetSchedules) {
       const station = {
         id: sched.stationId || sched.id,
@@ -547,10 +554,16 @@ async function main() {
         province: sched.province || "Junín",
         streamUrl: sched.streamUrl
       };
-      await recordSingleStation(station, sched.durationSecs || 3600, sched.customTitle || customTitleArg);
+      const ok = await recordSingleStation(station, sched.durationSecs || 3600, sched.customTitle || customTitleArg);
+      if (ok) successCount++;
+      else failCount++;
     }
 
-    console.log("\n🎉 TODAS LAS GRABACIONES PROGRAMADAS HAN SIDO COMPLETADAS");
+    if (successCount === 0 && failCount > 0) {
+      console.error(`\n❌ Ninguna grabación pudo completarse (${failCount} fallo(s)).`);
+      process.exit(1);
+    }
+    console.log(`\n🎉 GRABACIONES COMPLETADAS: ${successCount} exitosa(s), ${failCount} fallida(s).`);
     process.exit(0);
   }
 
