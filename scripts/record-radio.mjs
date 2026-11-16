@@ -100,9 +100,15 @@ const UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || "";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
+// CDJ-RECORD-SCRIPT-V3 (Soporte camelCase/snake_case, tolerancia cron 150m y cero undefined PET)
 function formatDuration(secs) {
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
+  const safeSecs = Math.max(0, Math.round(Number(secs) || 0));
+  const h = Math.floor(safeSecs / 3600);
+  const m = Math.floor((safeSecs % 3600) / 60);
+  const s = Math.floor(safeSecs % 60);
+  if (h > 0) {
+    return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  }
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
@@ -277,6 +283,35 @@ async function saveToSupabase(rec) {
   }
 }
 
+function normalizeScheduleRow(s) {
+  if (!s || typeof s !== "object") return null;
+  let parsedDays = [1, 2, 3, 4, 5];
+  const rawDays = s.daysOfWeek ?? s.days_of_week;
+  if (Array.isArray(rawDays)) {
+    parsedDays = rawDays.map(Number);
+  } else if (typeof rawDays === "string" && rawDays.trim()) {
+    try {
+      const p = JSON.parse(rawDays);
+      if (Array.isArray(p)) parsedDays = p.map(Number);
+    } catch (_) {
+      parsedDays = rawDays.split(",").map((v) => parseInt(v.trim(), 10)).filter((n) => !isNaN(n));
+    }
+  }
+  return {
+    id: s.id || s.stationId || s.station_id || `sched_${Date.now()}`,
+    stationId: s.stationId || s.station_id || s.id || "",
+    stationName: s.stationName || s.station_name || s.name || "Radio Regional",
+    frequency: s.frequency || "FM",
+    province: s.province || "Junín",
+    streamUrl: (s.streamUrl || s.stream_url || "").trim(),
+    enabled: s.enabled !== false,
+    timePeru: (s.timePeru || s.time_peru || "13:00").trim(),
+    daysOfWeek: parsedDays,
+    durationSecs: Number(s.durationSecs || s.duration_secs || 3600),
+    customTitle: (s.customTitle || s.custom_title || "").trim()
+  };
+}
+
 // Función para cargar programaciones guardadas localmente en el repositorio (radio-schedules.json)
 function getLocalSchedules() {
   const possiblePaths = [
@@ -290,19 +325,7 @@ function getLocalSchedules() {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
           console.log(`[Scheduler] ${parsed.length} programación(es) cargadas desde archivo local '${p}'`);
-          return parsed.map((s) => ({
-            id: s.id || s.stationId,
-            stationId: s.stationId || s.id,
-            stationName: s.stationName || s.name,
-            frequency: s.frequency || "FM",
-            province: s.province || "Junín",
-            streamUrl: s.streamUrl,
-            enabled: s.enabled !== false,
-            timePeru: s.timePeru || "13:00",
-            daysOfWeek: Array.isArray(s.daysOfWeek) ? s.daysOfWeek : [1, 2, 3, 4, 5],
-            durationSecs: s.durationSecs || 3600,
-            customTitle: s.customTitle || ""
-          }));
+          return parsed.map(normalizeScheduleRow).filter(Boolean);
         }
       } catch (err) {
         console.warn(`[Scheduler] Aviso al leer ${p}:`, err.message);
@@ -324,18 +347,7 @@ async function fetchActiveSchedulesFromSupabase() {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
-        return data.map((row) => ({
-          id: row.id,
-          stationId: row.station_id,
-          stationName: row.station_name,
-          frequency: row.frequency,
-          province: row.province,
-          streamUrl: row.stream_url,
-          durationSecs: row.duration_secs || 3600,
-          customTitle: row.custom_title,
-          timePeru: row.time_peru,
-          daysOfWeek: row.days_of_week
-        }));
+        return data.map(normalizeScheduleRow).filter(Boolean);
       }
     }
   } catch (err) {
@@ -531,8 +543,8 @@ async function main() {
           return { ...s, diffMin, schedHour, schedMin };
         });
 
-        // Seleccionar aquellas dentro de una ventana de 90 minutos (por colas habituales en GitHub Actions)
-        const nearSchedules = withDiff.filter(s => s.diffMin <= 90);
+        // Seleccionar aquellas dentro de una ventana de 150 minutos (por colas habituales en GitHub Actions)
+        const nearSchedules = withDiff.filter(s => s.diffMin <= 150);
 
         if (nearSchedules.length > 0) {
           console.log(`[Scheduler] Se encontraron ${nearSchedules.length} emisora(s) correspondiente(s) al horario de ${currentTimeStr} PET:`);
@@ -541,7 +553,8 @@ async function main() {
           // GitHub Actions se ejecutó fuera de cualquier ventana horaria programada
           withDiff.sort((a, b) => a.diffMin - b.diffMin);
           const closest = withDiff[0];
-          const skipMsg = `GitHub Actions se ejecutó a las ${currentTimeStr} PET (desfase de ${closest.diffMin} min respecto a '${closest.stationName}' a las ${closest.timePeru} PET).`;
+          const closestTime = closest.timePeru || "hora configurada";
+          const skipMsg = `GitHub Actions se ejecutó a las ${currentTimeStr} PET (desfase de ${closest.diffMin} min respecto a '${closest.stationName}' a las ${closestTime} PET).`;
           console.warn(`[Scheduler] ⚠️ ${skipMsg}`);
           console.warn(`[SKIP_REASON]${skipMsg}[/SKIP_REASON]`);
           process.exit(0);
