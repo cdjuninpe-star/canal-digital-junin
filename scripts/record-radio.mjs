@@ -227,6 +227,17 @@ Para solucionarlo:
   };
 }
 
+function buildSupabaseHeaders(apiKey, extra = {}) {
+  const headers = {
+    "apikey": apiKey,
+    ...extra
+  };
+  if (typeof apiKey === "string" && apiKey.startsWith("eyJ")) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+  return headers;
+}
+
 async function saveToSupabase(rec) {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     console.log("[Supabase] Variables no configuradas. Omitiendo registro en base de datos.");
@@ -236,12 +247,10 @@ async function saveToSupabase(rec) {
     console.log("[Supabase] Registrando grabación en la tabla 'radio_recordings'...");
     const res = await fetch(`${SUPABASE_URL}/rest/v1/radio_recordings`, {
       method: "POST",
-      headers: {
+      headers: buildSupabaseHeaders(SUPABASE_KEY, {
         "Content-Type": "application/json",
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`,
         "Prefer": "resolution=merge-duplicates"
-      },
+      }),
       body: JSON.stringify({
         id: rec.id,
         title: rec.title,
@@ -310,10 +319,7 @@ async function fetchActiveSchedulesFromSupabase() {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/radio_schedules?enabled=eq.true`, {
-      headers: {
-        "apikey": SUPABASE_KEY,
-        "Authorization": `Bearer ${SUPABASE_KEY}`
-      }
+      headers: buildSupabaseHeaders(SUPABASE_KEY)
     });
     if (res.ok) {
       const data = await res.json();
