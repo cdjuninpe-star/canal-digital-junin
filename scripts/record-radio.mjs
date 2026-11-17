@@ -100,7 +100,7 @@ const UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || "";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
-// CDJ-RECORD-SCRIPT-V3 (Soporte camelCase/snake_case, tolerancia cron 150m y cero undefined PET)
+// CDJ-RECORD-SCRIPT-V4 (Preserva timePeru/daysOfWeek/bitrate, limite 100MB Cloudinary y cero falsos positivos)
 function formatDuration(secs) {
   const safeSecs = Math.max(0, Math.round(Number(secs) || 0));
   const h = Math.floor(safeSecs / 3600);
@@ -120,9 +120,21 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
-async function recordStream(streamUrl, duration, outputPath) {
+function resolveSafeBitrate(durationSecs, requestedBitrate) {
+  const clean = ["64k", "96k", "128k"].includes(requestedBitrate) ? requestedBitrate : "96k";
+  // En Cloudinary plan gratuito el límite por archivo es 100 MB.
+  // 2 horas (7200s) a 96k/128k pesa ~86-115 MB; a 64k pesa ~57 MB (seguro < 100 MB).
+  if (durationSecs >= 5400 && clean !== "64k") {
+    console.log(`[FFmpeg] Duración >= 90 min (${durationSecs}s): ajustando bitrate de ${clean} a 64k para no superar el límite de 100 MB en Cloudinary.`);
+    return "64k";
+  }
+  return clean;
+}
+
+async function recordStream(streamUrl, duration, outputPath, requestedBitrate = "96k") {
+  const bitrate = resolveSafeBitrate(duration, requestedBitrate);
   return new Promise((resolve, reject) => {
-    console.log(`[FFmpeg] Grabando flujo de audio durante ${duration}s...`);
+    console.log(`[FFmpeg] Grabando flujo de audio durante ${duration}s (bitrate ${bitrate})...`);
     console.log(`[FFmpeg] URL: ${streamUrl}`);
     
     const ffmpeg = spawn("ffmpeg", [
@@ -136,7 +148,7 @@ async function recordStream(streamUrl, duration, outputPath) {
       "-i", streamUrl,
       "-t", duration.toString(),
       "-acodec", "libmp3lame",
-      "-b:a", "64k",
+      "-b:a", bitrate,
       "-ar", "44100",
       "-f", "mp3",
       outputPath
@@ -308,7 +320,8 @@ function normalizeScheduleRow(s) {
     timePeru: (s.timePeru || s.time_peru || "13:00").trim(),
     daysOfWeek: parsedDays,
     durationSecs: Number(s.durationSecs || s.duration_secs || 3600),
-    customTitle: (s.customTitle || s.custom_title || "").trim()
+    customTitle: (s.customTitle || s.custom_title || "").trim(),
+    bitrate: (s.bitrate || "96k").trim()
   };
 }
 
@@ -361,52 +374,10 @@ async function getActiveSchedules() {
   if (local && local.length > 0) return local;
   const fromSupabase = await fetchActiveSchedulesFromSupabase();
   if (fromSupabase && fromSupabase.length > 0) return fromSupabase;
-  
-  // Respaldo de seguridad con las 3 emisoras predeterminadas de Junín
-  return [
-    {
-      id: "sched_sudamericana_1045",
-      stationId: "radio-sudamericana",
-      stationName: "Radio Sudamericana",
-      frequency: "104.5 FM",
-      province: "Huancayo",
-      streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-      enabled: true,
-      timePeru: "13:00",
-      daysOfWeek: [1, 2, 3, 4, 5],
-      durationSecs: 3600,
-      customTitle: "Noticiero Emisión Central - Radio Sudamericana"
-    },
-    {
-      id: "sched_tarma_997",
-      stationId: "radio-tarma",
-      stationName: "Radio Tarma",
-      frequency: "99.7 FM",
-      province: "Tarma",
-      streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3",
-      enabled: true,
-      timePeru: "07:00",
-      daysOfWeek: [1, 2, 3, 4, 5],
-      durationSecs: 3600,
-      customTitle: "Edición Matinal - Radio Tarma"
-    },
-    {
-      id: "sched_cumbre_985",
-      stationId: "radio-cumbre",
-      stationName: "Radio Cumbre",
-      frequency: "98.5 FM",
-      province: "Huancayo",
-      streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-      enabled: true,
-      timePeru: "18:00",
-      daysOfWeek: [1, 2, 3, 4, 5],
-      durationSecs: 3600,
-      customTitle: "Resumen Informativo - Radio Cumbre"
-    }
-  ];
+  return [];
 }
 
-async function recordSingleStation(station, durationSecs, customTitle) {
+async function recordSingleStation(station, durationSecs, customTitle, bitrate = "96k") {
   const timestampStr = new Date().toLocaleDateString("es-PE", {
     timeZone: "America/Lima",
     day: "2-digit",
@@ -427,7 +398,7 @@ async function recordSingleStation(station, durationSecs, customTitle) {
   try {
     let recordedOk = false;
     try {
-      await recordStream(station.streamUrl, durationSecs, tempFile);
+      await recordStream(station.streamUrl, durationSecs, tempFile, bitrate);
       recordedOk = true;
     } catch (err) {
       console.warn(`⚠️ Primer intento de captura para ${station.name} falló: ${err.message}`);
@@ -435,7 +406,7 @@ async function recordSingleStation(station, durationSecs, customTitle) {
       if (backupUrl && backupUrl !== station.streamUrl && !backupUrl.includes("soundhelix.com")) {
         console.log(`🔄 Reintentando con flujo de respaldo: ${backupUrl}`);
         try {
-          await recordStream(backupUrl, durationSecs, tempFile);
+          await recordStream(backupUrl, durationSecs, tempFile, bitrate);
           recordedOk = true;
         } catch (err2) {
           console.error(`❌ Falló también el flujo de respaldo:`, err2.message);
@@ -505,9 +476,10 @@ async function main() {
     const schedules = await getActiveSchedules();
 
     if (!schedules || schedules.length === 0) {
-      console.warn("\n⚠️ AVISO: No se encontraron emisoras programadas activas en 'radio-schedules.json' ni en Supabase.");
-      console.warn("Agrega tus programaciones en el panel de control y sincronízalas con GitHub.");
-      process.exit(0);
+      const noSchedMsg = "No se encontraron emisoras programadas activas en 'radio-schedules.json' ni en Supabase.";
+      console.error(`\n❌ AVISO: ${noSchedMsg}`);
+      console.error(`[SKIP_REASON]${noSchedMsg}[/SKIP_REASON]`);
+      process.exit(1);
     }
 
     // Determinar hora y día actual en Perú (UTC-5)
@@ -531,34 +503,47 @@ async function main() {
         return s.daysOfWeek.includes(currentDay);
       });
 
-      if (todaySchedules.length > 0) {
-        // Calcular diferencia en minutos con la hora de emisión programada
-        const withDiff = todaySchedules.map(s => {
-          const [hStr, mStr] = (s.timePeru || "13:00").split(":");
-          const schedHour = parseInt(hStr, 10) || 0;
-          const schedMin = parseInt(mStr, 10) || 0;
-          const schedTotalMin = schedHour * 60 + schedMin;
-          let diffMin = Math.abs(currentTotalMin - schedTotalMin);
-          if (diffMin > 720) diffMin = 1440 - diffMin;
-          return { ...s, diffMin, schedHour, schedMin };
-        });
+      if (todaySchedules.length === 0) {
+        const noDayMsg = `Hoy (día ${currentDay}) a las ${currentTimeStr} PET no hay emisoras activas programadas.`;
+        console.warn(`[Scheduler] ⚠️ ${noDayMsg}`);
+        console.warn(`[SKIP_REASON]${noDayMsg}[/SKIP_REASON]`);
+        process.exit(1);
+      }
 
-        // Seleccionar aquellas dentro de una ventana de 150 minutos (por colas habituales en GitHub Actions)
-        const nearSchedules = withDiff.filter(s => s.diffMin <= 150);
+      // Calcular diferencia en minutos con la hora de emisión programada
+      const withDiff = todaySchedules.map(s => {
+        const [hStr, mStr] = (s.timePeru || "13:00").split(":");
+        const schedHour = parseInt(hStr, 10) || 0;
+        const schedMin = parseInt(mStr, 10) || 0;
+        const schedTotalMin = schedHour * 60 + schedMin;
+        let diffMin = Math.abs(currentTotalMin - schedTotalMin);
+        if (diffMin > 720) diffMin = 1440 - diffMin;
+        return { ...s, diffMin, schedHour, schedMin };
+      });
 
-        if (nearSchedules.length > 0) {
-          console.log(`[Scheduler] Se encontraron ${nearSchedules.length} emisora(s) correspondiente(s) al horario de ${currentTimeStr} PET:`);
-          targetSchedules = nearSchedules;
-        } else {
-          // GitHub Actions se ejecutó fuera de cualquier ventana horaria programada
-          withDiff.sort((a, b) => a.diffMin - b.diffMin);
-          const closest = withDiff[0];
-          const closestTime = closest.timePeru || "hora configurada";
-          const skipMsg = `GitHub Actions se ejecutó a las ${currentTimeStr} PET (desfase de ${closest.diffMin} min respecto a '${closest.stationName}' a las ${closestTime} PET).`;
-          console.warn(`[Scheduler] ⚠️ ${skipMsg}`);
-          console.warn(`[SKIP_REASON]${skipMsg}[/SKIP_REASON]`);
-          process.exit(0);
+      // Ventana de 150 minutos para absorber retrasos moderados de GitHub cron
+      const nearSchedules = withDiff.filter(s => s.diffMin <= 150);
+
+      if (nearSchedules.length > 0) {
+        console.log(`[Scheduler] Se encontraron ${nearSchedules.length} emisora(s) correspondiente(s) al horario de ${currentTimeStr} PET:`);
+        targetSchedules = nearSchedules;
+      } else {
+        // GitHub Actions 'on: schedule' se retrasó más de 2.5 horas respecto a todas las programaciones de hoy
+        withDiff.sort((a, b) => a.diffMin - b.diffMin);
+        const closest = withDiff[0];
+        const closestTime = closest.timePeru || "hora configurada";
+        const skipMsg = `GitHub Actions (schedule) despertó tarde a las ${currentTimeStr} PET (${closest.diffMin} min de desfase respecto a '${closest.stationName}' de las ${closestTime} PET). Activa cron-job.org para grabar puntual.`;
+        console.error(`[Scheduler] ❌ ${skipMsg}`);
+        console.error(`[SKIP_REASON]${skipMsg}[/SKIP_REASON]`);
+        if (process.env.GITHUB_STEP_SUMMARY) {
+          try {
+            fs.appendFileSync(
+              process.env.GITHUB_STEP_SUMMARY,
+              `### ⚠️ Grabación omitida por retraso de GitHub cron\n${skipMsg}\n\n💡 **Solución gratis sin retrasos:** Configura el disparador de `cron-job.org` desde el Panel Admin (botón *Hora Exacta*).\n`
+            );
+          } catch (_) {}
         }
+        process.exit(1);
       }
     }
 
@@ -573,7 +558,12 @@ async function main() {
         province: sched.province || "Junín",
         streamUrl: sched.streamUrl
       };
-      const ok = await recordSingleStation(station, sched.durationSecs || 3600, sched.customTitle || customTitleArg);
+      const ok = await recordSingleStation(
+        station,
+        sched.durationSecs || 3600,
+        sched.customTitle || customTitleArg,
+        sched.bitrate || "96k"
+      );
       if (ok) successCount++;
       else failCount++;
     }
@@ -586,8 +576,7 @@ async function main() {
     process.exit(0);
   }
 
-  // MODO EMISORA ESPECÍFICA
-  // 1. Buscar en archivo local radio-schedules.json si existe
+  // MODO EMISORA ESPECÍFICA (disparo manual o cron-job.org)
   const localSchedules = getLocalSchedules() || [];
   const localMatch = localSchedules.find(
     (s) =>
@@ -600,6 +589,7 @@ async function main() {
   let stationName = stationNameArg || process.env.STATION_NAME;
   let stationFreq = frequencyArg || process.env.STATION_FREQUENCY;
   let stationProv = provinceArg || process.env.STATION_PROVINCE;
+  let bitrate = localMatch?.bitrate || "96k";
 
   if (localMatch) {
     console.log(`[Scheduler] Emisora encontrada en radio-schedules.json: ${localMatch.stationName}`);
@@ -625,6 +615,7 @@ async function main() {
         stationName = stationName || sbMatch.stationName;
         stationFreq = stationFreq || sbMatch.frequency;
         stationProv = stationProv || sbMatch.province;
+        bitrate = sbMatch.bitrate || bitrate;
       }
     } catch (dbErr) {
       console.warn("[Database] No se pudo consultar Supabase para la emisora:", dbErr.message);
@@ -656,7 +647,7 @@ async function main() {
   };
 
   const durationSecs = parseInt(durationArg, 10) || 3600;
-  const success = await recordSingleStation(selectedStation, durationSecs, customTitleArg);
+  const success = await recordSingleStation(selectedStation, durationSecs, customTitleArg, bitrate);
 
   if (success) {
     console.log("\n🎉 GRABACIÓN FINALIZADA Y GUARDADA CON ÉXITO");
