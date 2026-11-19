@@ -65,22 +65,6 @@ const PRESET_STATIONS = {
     province: "Tarma",
     streamUrl: "https://radio.publikarte.com.pe/listen/radio_la_j/jstream",
     defaultDuration: 7200
-  },
-  sudamericana: {
-    id: "sudamericana",
-    name: "Radio Sudamericana",
-    frequency: "104.5 FM",
-    province: "Huancayo",
-    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-    defaultDuration: 3600
-  },
-  cumbre: {
-    id: "cumbre",
-    name: "Radio Cumbre",
-    frequency: "98.5 FM",
-    province: "Huancayo",
-    streamUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-    defaultDuration: 3600
   }
 };
 
@@ -95,12 +79,12 @@ const provinceArg = process.argv[8] || process.env.STATION_PROVINCE || "";
 const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || "bk9klm2l";
 const API_KEY = process.env.CLOUDINARY_API_KEY;
 const API_SECRET = process.env.CLOUDINARY_API_SECRET;
-const UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || "";
+const UPLOAD_PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || "canal_digital_audio";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
-// CDJ-RECORD-SCRIPT-V4 (Preserva timePeru/daysOfWeek/bitrate, limite 100MB Cloudinary y cero falsos positivos)
+// CDJ-RECORD-SCRIPT-V5 (Sintaxis verificada cron-job.org, respaldo preset unsigned Cloudinary y salida limpia en schedule retrasado)
 function formatDuration(secs) {
   const safeSecs = Math.max(0, Math.round(Number(secs) || 0));
   const h = Math.floor(safeSecs / 3600);
@@ -212,27 +196,41 @@ Para solucionarlo:
   const mimeType = filePath.endsWith(".aac") ? "audio/aac" : "audio/mpeg";
   const fileBlob = new Blob([fileBuffer], { type: mimeType });
 
-  const formData = new FormData();
-  formData.append("file", fileBlob, path.basename(filePath));
-  formData.append("folder", folder);
-  formData.append("public_id", publicId);
+  const buildUploadForm = (useSigned) => {
+    const fd = new FormData();
+    fd.append("file", fileBlob, path.basename(filePath));
+    fd.append("folder", folder);
+    fd.append("public_id", publicId);
 
-  if (API_KEY && API_SECRET) {
-    const stringToSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${API_SECRET}`;
-    const signature = crypto.createHash("sha1").update(stringToSign).digest("hex");
-    formData.append("timestamp", String(timestamp));
-    formData.append("api_key", API_KEY);
-    formData.append("signature", signature);
-  } else if (UPLOAD_PRESET) {
-    formData.append("upload_preset", UPLOAD_PRESET);
-  }
+    if (useSigned && API_KEY && API_SECRET) {
+      const stringToSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${API_SECRET}`;
+      const signature = crypto.createHash("sha1").update(stringToSign).digest("hex");
+      fd.append("timestamp", String(timestamp));
+      fd.append("api_key", API_KEY);
+      fd.append("signature", signature);
+    } else if (UPLOAD_PRESET) {
+      fd.append("upload_preset", UPLOAD_PRESET);
+    }
+    return fd;
+  };
 
-  const response = await fetch(endpoint, {
+  let response = await fetch(endpoint, {
     method: "POST",
-    body: formData
+    body: buildUploadForm(Boolean(API_KEY && API_SECRET))
   });
 
-  const json = await response.json().catch(() => ({}));
+  let json = await response.json().catch(() => ({}));
+
+  // Si la firma con API_KEY/API_SECRET falló, reintentar automáticamente con upload_preset unsigned
+  if (!response.ok && API_KEY && API_SECRET && UPLOAD_PRESET) {
+    console.warn(`[Cloudinary] Subida firmada devolvió ${response.status} (${json.error?.message || "error"}). Reintentando con preset '${UPLOAD_PRESET}'...`);
+    response = await fetch(endpoint, {
+      method: "POST",
+      body: buildUploadForm(false)
+    });
+    json = await response.json().catch(() => ({}));
+  }
+
   if (!response.ok) {
     throw new Error(`Cloudinary Error (${response.status}): ${json.error?.message || "Subida rechazada"}`);
   }
@@ -477,9 +475,9 @@ async function main() {
 
     if (!schedules || schedules.length === 0) {
       const noSchedMsg = "No se encontraron emisoras programadas activas en 'radio-schedules.json' ni en Supabase.";
-      console.error(`\n❌ AVISO: ${noSchedMsg}`);
-      console.error(`[SKIP_REASON]${noSchedMsg}[/SKIP_REASON]`);
-      process.exit(1);
+      console.log(`::notice::${noSchedMsg}`);
+      console.log(`[SKIP_REASON]${noSchedMsg}[/SKIP_REASON]`);
+      process.exit(process.env.GITHUB_EVENT_NAME === "schedule" ? 0 : 1);
     }
 
     // Determinar hora y día actual en Perú (UTC-5)
@@ -505,9 +503,9 @@ async function main() {
 
       if (todaySchedules.length === 0) {
         const noDayMsg = `Hoy (día ${currentDay}) a las ${currentTimeStr} PET no hay emisoras activas programadas.`;
-        console.warn(`[Scheduler] ⚠️ ${noDayMsg}`);
-        console.warn(`[SKIP_REASON]${noDayMsg}[/SKIP_REASON]`);
-        process.exit(1);
+        console.log(`::notice::${noDayMsg}`);
+        console.log(`[SKIP_REASON]${noDayMsg}[/SKIP_REASON]`);
+        process.exit(process.env.GITHUB_EVENT_NAME === "schedule" ? 0 : 1);
       }
 
       // Calcular diferencia en minutos con la hora de emisión programada
@@ -533,17 +531,17 @@ async function main() {
         const closest = withDiff[0];
         const closestTime = closest.timePeru || "hora configurada";
         const skipMsg = `GitHub Actions (schedule) despertó tarde a las ${currentTimeStr} PET (${closest.diffMin} min de desfase respecto a '${closest.stationName}' de las ${closestTime} PET). Activa cron-job.org para grabar puntual.`;
-        console.error(`[Scheduler] ❌ ${skipMsg}`);
-        console.error(`[SKIP_REASON]${skipMsg}[/SKIP_REASON]`);
+        console.log(`::notice::${skipMsg}`);
+        console.log(`[SKIP_REASON]${skipMsg}[/SKIP_REASON]`);
         if (process.env.GITHUB_STEP_SUMMARY) {
           try {
             fs.appendFileSync(
               process.env.GITHUB_STEP_SUMMARY,
-              `### ⚠️ Grabación omitida por retraso de GitHub cron\n${skipMsg}\n\n💡 **Solución gratis sin retrasos:** Configura el disparador de `cron-job.org` desde el Panel Admin (botón *Hora Exacta*).\n`
+              `### ⚠️ Grabación omitida por retraso de GitHub cron\n${skipMsg}\n\n💡 **Solución gratis sin retrasos:** Configura el disparador de **cron-job.org** desde el Panel Admin (botón *Hora Exacta*).\n`
             );
           } catch (_) {}
         }
-        process.exit(1);
+        process.exit(process.env.GITHUB_EVENT_NAME === "schedule" ? 0 : 1);
       }
     }
 
